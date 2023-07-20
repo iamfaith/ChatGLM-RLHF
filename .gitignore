@@ -1,3 +1,7 @@
+screenlog.*
+chatglm2_6b
+single_chatglm2
+*.pt
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

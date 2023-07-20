@@ -6,12 +6,22 @@ Reward model
 
 """
 import torch
-from chatglm_local.modeling_chatglm import ChatGLMModel
+
+
+import sys, os
+# sys.path.append("/home/faith/chatglm2-6b")
+now_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(now_dir)
+sys.path.append(project_dir)
+
+from chatglm2_6b.modeling_chatglm import ChatGLMModel
+# from chatglm_local.modeling_chatglm import ChatGLMModel
+
 from torch import nn
 from transformers import BertTokenizer, BertModel
 import numpy as np
 from functools import partial
-
+from copy import deepcopy
 """
 critic 的词表最好和action模型的词表一样这样便于对每个生成的token进行打分，
 不一致的词表会导致打分不对齐，所以选择用一样的模型但是加一下打分的输出
@@ -19,12 +29,24 @@ critic 的词表最好和action模型的词表一样这样便于对每个生成�
 这样直接继承了，原来的token embedding
 """
 class Critic(nn.Module):
-    def __init__(self, device="cpu_float") -> None:
+    def __init__(self, device="cpu_float", m=None) -> None:
         super().__init__()
-        model = ChatGLMModel.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
-        layers_keep = len(model.layers)//9
+        if m is None:
+            model = ChatGLMModel.from_pretrained("/home/faith/chatglm2-6b", trust_remote_code=True)
+        else:
+            # model = m
+            model = deepcopy(m)
+            # 检查参数是否相等
+            # for p1, p2 in zip(model.parameters(), m.parameters()):
+                # print(torch.equal(p1, p2))
+
+            # model = ChatGLMModel()
+            # model.load_state_dict(m.state_dic())
+
+        layers_keep = len(model.encoder.layers)//9
         layers_keep = 1
-        model.layers = model.layers[:layers_keep]
+        model.encoder.num_layers = layers_keep
+        model.encoder.layers = model.encoder.layers[:layers_keep]
         # solve RuntimeError: "LayerNormKernelImpl" not implemented for 'Half'
         if "cuda" in device:
             model = model.half().cuda(device) # half for gpu only
@@ -75,15 +97,15 @@ class RewardBySimilarity(nn.Module):
     def __init__(self, device="cpu") -> None:
         super().__init__()
         # Load model from HuggingFace Hub
-        tokenizer = BertTokenizer.from_pretrained('shibing624/text2vec-base-chinese')
-        model = BertModel.from_pretrained('shibing624/text2vec-base-chinese')
+        tokenizer = BertTokenizer.from_pretrained('/data/text2vec-base-chinese')
+        model = BertModel.from_pretrained('/data/text2vec-base-chinese')
         model.eval()
         self.model = model.to(device)
         self.tokenizer = tokenizer
         self.device = device
-    def forward(self, gen_texts=["你好"],
-                 good_answers=['你好', "hello"],
-                 bad_answers=['再见', 'bye bye'],
+    def forward(self, gen_texts=["中大好吗"],
+                 good_answers=['好吗好吗好吗好吗好吗', "真的好"],
+                 bad_answers=['表要', '这吗'],
                  weight_for_cos_and_jaccard = [0.5, 0.5]):
         examples = good_answers + bad_answers
         example_num = len(examples)
@@ -120,6 +142,7 @@ class RewardBySimilarity(nn.Module):
             jaccards = torch.tensor(np.vectorize(jaccard_s1)(np.array(ids[-len(examples):], dtype=object)), dtype=coses.dtype, device=coses.device)
             similarity = weight_for_cos_and_jaccard[0]*coses + weight_for_cos_and_jaccard[1]*jaccards
             value, index = similarity.max(dim=-1)
+            print(value, index)
             reward_.append(value*reward_direction[index])
         reward = torch.stack(reward_)
         return reward
@@ -131,7 +154,7 @@ def test_reward_by_similarity():
 
 def test_critic():
     from transformers import AutoTokenizer, AutoModel
-    tokenizer = AutoTokenizer.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained("/home/faith/chatglm2-6b", trust_remote_code=True)
     critic = Critic()
     input_ids = torch.tensor(tokenizer.encode("你好"), dtype=torch.long).unsqueeze(0)
     input_ids = input_ids.repeat(2,1)
@@ -154,4 +177,5 @@ def test_reward():
     pass
 
 if __name__ == "__main__":
-    test_reward_by_similarity()
+    # test_reward_by_similarity()
+    test_critic()
